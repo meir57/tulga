@@ -83,8 +83,8 @@ kbd{ font:inherit; font-size:12px; padding:1px 6px; border-radius:5px; backgroun
   <div class="swatches" id="swatches" title="Цвет стен"></div>
   <label class="fov"><span>Обзор</span><input id="fovRange" type="range" min="45" max="85" step="1" value="85"><b id="fovLabel">85°</b></label>
   <button class="btn" id="comfortBtn" type="button">Комфорт: вкл</button>
-  <button class="btn" id="cabBtn" type="button">Шкаф над унитазом: как есть</button>
   <button class="btn" id="furnBtn" type="button">Скрыть мебель</button>
+  <button class="btn" id="lamBtn" type="button">Ламинат: прямая</button>
   <button class="btn" id="viewBtn" type="button">Вид сверху</button>
 </div>
 
@@ -96,7 +96,7 @@ kbd{ font:inherit; font-size:12px; padding:1px 6px; border-radius:5px; backgroun
   </div>
 </div>
 
-<div id="hint" hidden>Клик по сцене — вернуться к обзору · <kbd>Esc</kbd> — выйти и пользоваться кнопками · <kbd>+</kbd> <kbd>−</kbd> угол обзора · <kbd>M</kbd> вид сверху · <kbd>F</kbd> мебель · <kbd>C</kbd> комфорт · <kbd>K</kbd> шкаф над унитазом</div>
+<div id="hint" hidden>Клик по сцене — вернуться к обзору · <kbd>Esc</kbd> — выйти и пользоваться кнопками · <kbd>+</kbd> <kbd>−</kbd> угол обзора · <kbd>M</kbd> вид сверху · <kbd>F</kbd> мебель · <kbd>C</kbd> комфорт · <kbd>L</kbd> ламинат</div>
 <div id="fail" hidden>Для 3D-просмотра нужен браузер с WebGL. Откройте страницу в Safari или Chrome.</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -144,6 +144,31 @@ var TELEPORTS=[
  {name:'Санузел',x:2.2,z:5.95,lx:0.9,lz:6.6},
  {name:'Лоджия',x:4.5,z:1.0,lx:6.6,lz:0.95}
 ];
+
+/* ---------------- THREE.Reflector (three.js r128 examples, MIT) — настоящее зеркало: сцена рендерится из отражённой камеры в текстуру ---------------- */
+(function(){
+  var Reflector=function(geometry,options){ var self=Reflect.construct(THREE.Mesh,[geometry],Reflector); Reflector.init.call(self,options||{}); return self; };
+  Reflector.init=function(options){ this.type='Reflector'; var scope=this; var maxDist=options.maxDist||0;
+    var color=options.color!==undefined?new THREE.Color(options.color):new THREE.Color(0x7f7f7f), tw=options.textureWidth||512, th=options.textureHeight||512, clipBias=options.clipBias||0, shader=Reflector.ReflectorShader;
+    var reflectorPlane=new THREE.Plane(), normal=new THREE.Vector3(), reflectorWorldPosition=new THREE.Vector3(), cameraWorldPosition=new THREE.Vector3(), rotationMatrix=new THREE.Matrix4(), lookAtPosition=new THREE.Vector3(0,0,-1), clipPlane=new THREE.Vector4(), view=new THREE.Vector3(), target=new THREE.Vector3(), q=new THREE.Vector4(), textureMatrix=new THREE.Matrix4(), virtualCamera=new THREE.PerspectiveCamera();
+    var renderTarget=new THREE.WebGLRenderTarget(tw,th,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBFormat}); if(!THREE.MathUtils.isPowerOfTwo(tw)||!THREE.MathUtils.isPowerOfTwo(th)) renderTarget.texture.generateMipmaps=false;
+    var material=new THREE.ShaderMaterial({uniforms:THREE.UniformsUtils.clone(shader.uniforms),fragmentShader:shader.fragmentShader,vertexShader:shader.vertexShader}); material.uniforms.tDiffuse.value=renderTarget.texture; material.uniforms.color.value=color; material.uniforms.textureMatrix.value=textureMatrix; this.material=material;
+    this.onBeforeRender=function(renderer,scene,camera){
+      reflectorWorldPosition.setFromMatrixPosition(scope.matrixWorld); cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld); rotationMatrix.extractRotation(scope.matrixWorld); normal.set(0,0,1); normal.applyMatrix4(rotationMatrix); view.subVectors(reflectorWorldPosition,cameraWorldPosition); if(view.dot(normal)>0) return; if(maxDist&&view.length()>maxDist) return; /* далёкое или отвёрнутое зеркало не перерисовываем */
+      view.reflect(normal).negate(); view.add(reflectorWorldPosition); rotationMatrix.extractRotation(camera.matrixWorld); lookAtPosition.set(0,0,-1); lookAtPosition.applyMatrix4(rotationMatrix); lookAtPosition.add(cameraWorldPosition); target.subVectors(reflectorWorldPosition,lookAtPosition); target.reflect(normal).negate(); target.add(reflectorWorldPosition);
+      virtualCamera.position.copy(view); virtualCamera.up.set(0,1,0); virtualCamera.up.applyMatrix4(rotationMatrix); virtualCamera.up.reflect(normal); virtualCamera.lookAt(target); virtualCamera.far=camera.far; virtualCamera.updateMatrixWorld(); virtualCamera.projectionMatrix.copy(camera.projectionMatrix);
+      textureMatrix.set(0.5,0,0,0.5,0,0.5,0,0.5,0,0,0.5,0.5,0,0,0,1); textureMatrix.multiply(virtualCamera.projectionMatrix); textureMatrix.multiply(virtualCamera.matrixWorldInverse); textureMatrix.multiply(scope.matrixWorld);
+      reflectorPlane.setFromNormalAndCoplanarPoint(normal,reflectorWorldPosition); reflectorPlane.applyMatrix4(virtualCamera.matrixWorldInverse); clipPlane.set(reflectorPlane.normal.x,reflectorPlane.normal.y,reflectorPlane.normal.z,reflectorPlane.constant);
+      var pm=virtualCamera.projectionMatrix; q.x=(Math.sign(clipPlane.x)+pm.elements[8])/pm.elements[0]; q.y=(Math.sign(clipPlane.y)+pm.elements[9])/pm.elements[5]; q.z=-1; q.w=(1+pm.elements[10])/pm.elements[14]; clipPlane.multiplyScalar(2/clipPlane.dot(q)); pm.elements[2]=clipPlane.x; pm.elements[6]=clipPlane.y; pm.elements[10]=clipPlane.z+1-clipBias; pm.elements[14]=clipPlane.w;
+      renderTarget.texture.encoding=renderer.outputEncoding; scope.visible=false; var currentRenderTarget=renderer.getRenderTarget(), currentXr=renderer.xr.enabled, currentShadow=renderer.shadowMap.autoUpdate; renderer.xr.enabled=false; renderer.shadowMap.autoUpdate=false;
+      renderer.setRenderTarget(renderTarget); renderer.state.buffers.depth.setMask(true); if(renderer.autoClear===false) renderer.clear(); renderer.render(scene,virtualCamera);
+      renderer.xr.enabled=currentXr; renderer.shadowMap.autoUpdate=currentShadow; renderer.setRenderTarget(currentRenderTarget); var vp=camera.viewport; if(vp!==undefined) renderer.state.viewport(vp); scope.visible=true; };
+    this.getRenderTarget=function(){ return renderTarget; }; };
+  Reflector.prototype=Object.create(THREE.Mesh.prototype); Reflector.prototype.constructor=Reflector; Reflector.prototype.isReflector=true;
+  Reflector.ReflectorShader={uniforms:{color:{value:null},tDiffuse:{value:null},textureMatrix:{value:null}},
+    vertexShader:'uniform mat4 textureMatrix; varying vec4 vUv; void main(){ vUv=textureMatrix*vec4(position,1.0); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader:'uniform vec3 color; uniform sampler2D tDiffuse; varying vec4 vUv; float blendOverlay(float base,float blend){ return (base<0.5?(2.0*base*blend):(1.0-2.0*(1.0-base)*(1.0-blend))); } vec3 blendOverlay(vec3 base,vec3 blend){ return vec3(blendOverlay(base.r,blend.r),blendOverlay(base.g,blend.g),blendOverlay(base.b,blend.b)); } void main(){ vec4 base=texture2DProj(tDiffuse,vUv); gl_FragColor=vec4(blendOverlay(base.rgb,color),1.0); }'};
+  THREE.Reflector=Reflector; })();
 
 /* ---------------- renderer / scene ---------------- */
 var canvas=document.getElementById('c');
@@ -203,7 +228,14 @@ function lightOak(){ /* 1.2 × 2.4 m, светлый дуб, вертикаль�
   var c=cv(512,1024),g=c.getContext('2d'); g.fillStyle='#c9b08c'; g.fillRect(0,0,512,1024);
   for(var i=0;i<120;i++){ var x=rnd(0,512); g.strokeStyle='rgba('+(i%3?'150,115,80':'235,215,185')+','+rnd(0.06,0.22)+')'; g.lineWidth=rnd(1,3); g.beginPath(); g.moveTo(x,0); g.bezierCurveTo(x+rnd(-10,10),300,x+rnd(-10,10),700,x+rnd(-6,6),1024); g.stroke(); }
   return c; }
-var T={lam:laminate(),wal:walnut(false),slat:walnut(true),conc:concrete(0.6,1.2),floorTile:concrete(0.6,0.6),wood:woodTile(),rib:ribbed(),oak:lightOak()};
+function herringbone(){ /* 2.4 × 2.4 m, ёлочка под 45°, планки 566×113 (период 0,8 × 0,16 м — бесшовно) */
+  var c=cv(1024,1024),g=c.getContext('2d'),px=1024/2.4,L=0.8/Math.SQRT2,W=0.16/Math.SQRT2,r=Math.SQRT1_2;
+  g.fillStyle='#8a6a4a'; g.fillRect(0,0,1024,1024);
+  function quad(pts){ g.beginPath(); pts.forEach(function(p,i){ var wx=(p[0]-p[1])*r+1.2, wy=(p[0]+p[1])*r+1.2; if(i===0) g.moveTo(wx*px,wy*px); else g.lineTo(wx*px,wy*px); }); g.closePath(); }
+  function plank(u1,u2,v1,v2){ g.fillStyle='hsl('+rnd(31,37)+','+rnd(28,36)+'%,'+rnd(62,71)+'%)'; quad([[u1,v1],[u2,v1],[u2,v2],[u1,v2]]); g.fill(); g.strokeStyle='rgba(60,40,20,0.45)'; g.lineWidth=1.5; g.stroke(); }
+  for(var sIdx=-30;sIdx<=30;sIdx++){ for(var k=-6;k<=6;k++){ var u=k*L+sIdx*W, v=k*L-sIdx*W; plank(u,u+L,v,v+W); plank(u+L,u+L+W,v,v+L); } }
+  return c; }
+var T={lam:laminate(),wal:walnut(false),slat:walnut(true),conc:concrete(0.6,1.2),floorTile:concrete(0.6,0.6),wood:woodTile(),rib:ribbed(),oak:lightOak(),herr:herringbone()};
 
 /* ---------------- materials ---------------- */
 var std=function(o){ o.roughness=o.roughness===undefined?0.9:o.roughness; o.metalness=o.metalness||0; return new THREE.MeshStandardMaterial(o); };
@@ -243,7 +275,10 @@ function clad(x1,x2,y1,y2,z1,z2,src,tw,th){ /* thin textured panel; texture scal
   var len=Math.max(x2-x1,z2-z1); return box(x1,x2,y1,y2,z1,z2,texMat(src,len,y2-y1,tw,th)); }
 
 /* ---------------- floors & ceilings ---------------- */
-plane(0,11.486,0,7.774,0,texMat(T.lam,11.486,7.774,2.4,2.4));
+/* пол: ламинат, две укладки на переключателе L — диагональ 45° и прямая вдоль света (доска от окон, по оси z); UV в метрах, текстура повёрнута — рисунок без искажений и без швов */
+var floorDiag, floorStraight, lamDiag=false; /* основная — прямая вдоль света; диагональ на переключателе для сравнения */
+(function(){ function mk(rot){ var g=new THREE.PlaneGeometry(11.486,7.774); var uv=g.attributes.uv; for(var i=0;i<uv.count;i++){ uv.setXY(i,uv.getX(i)*11.486,uv.getY(i)*7.774); } var t=tex(T.lam,1/2.4,1/2.4); t.rotation=rot; var m=new THREE.Mesh(g,std({map:t,roughness:0.85})); m.rotation.x=-Math.PI/2; m.position.set(11.486/2,0,7.774/2); scene.add(m); return m; }
+  floorDiag=mk(Math.PI/4); floorStraight=mk(Math.PI/2); floorDiag.visible=false; })();
 var tileF=function(x1,x2,z1,z2){ plane(x1,x2,z1,z2,0.004,texMat(T.floorTile,x2-x1,z2-z1,2.4,2.4)); };
 tileF(0.397,2.578,4.93,7.26); tileF(4.231,6.898,0.547,1.402); /* плитка в санузле и на лоджии */
 /* входная зона 1,26 × 0,82 м: один лист керамогранита большого формата (120×120, подрезан под карман), без швов, тон чуть темнее пола санузла; по периметру тонкая чёрная рамка-профиль в уровень */
@@ -354,7 +389,7 @@ clad(2.568,2.578,0,H,4.942,5.55,T.conc,2.4,2.4); clad(2.568,2.578,0,H,6.35,7.26,
 
 /* kitchen backsplash */
 /* фартук: раскладка плитки 60×120 симметрична оси варочной (x 8,5) — швы на 7,6 / 8,2 / 8,8 / 9,4 / 10,0; розетки попадают в середину плиток */
-(function(){ var t=tex(T.conc,3.964/2.4,0.6/2.4); t.offset.x=0.141; box(6.898,10.862,0.9,1.5,7.325,7.335,std({map:t,roughness:0.85})); })(); clad(10.862,11.087,0.9,2.44,7.059,7.069,T.conc,2.4,2.4); /* фартук и на коробе стояка */
+clad(10.862,11.087,0.9,2.44,7.059,7.069,T.conc,2.4,2.4); /* фартук на коробе стояка; фартук под верхними шкафами строится в блоке кухни (две высоты) */
 
 /* ---------------- furniture: bedroom ---------------- */
 curGroup=furnGroup;
@@ -364,15 +399,16 @@ var ribMat=function(w){ return texMat(T.rib,w,0.3,0.32,0.3); };
 box(3.49,3.868,0.25,0.55,0.75,1.25,ribMat(0.5),true); box(3.49,3.868,0.25,0.55,3.29,3.78,ribMat(0.5),true);
 box(3.52,3.6,0.47,0.485,0.95,1.05,black); box(3.52,3.6,0.47,0.485,3.49,3.59,black);
 box(0.413,0.713,0.72,0.76,1.01,2.21,white,true); box(0.43,0.47,0,0.72,1.03,1.07,black); box(0.43,0.47,0,0.72,2.15,2.19,black); box(0.67,0.71,0,0.72,1.03,1.07,black); box(0.67,0.71,0,0.72,2.15,2.19,black);
-var mirR=new THREE.Mesh(new THREE.CylinderGeometry(0.36,0.36,0.02,40),mirrorMat); mirR.rotation.z=Math.PI/2; mirR.position.set(0.425,1.45,1.61); add(mirR);
-var mirRing=new THREE.Mesh(new THREE.TorusGeometry(0.36,0.015,8,48),black); mirRing.rotation.y=Math.PI/2; mirRing.position.set(0.435,1.45,1.61); add(mirRing);
-var mirLed=new THREE.Mesh(new THREE.TorusGeometry(0.325,0.008,6,64),emitCool); mirLed.rotation.y=Math.PI/2; mirLed.position.set(0.44,1.45,1.61); add(mirLed); /* подсветка зеркала, вывод h=1500 */
-var mirHalo=new THREE.Mesh(new THREE.TorusGeometry(0.385,0.012,6,64),new THREE.MeshStandardMaterial({color:0xfff6e8,emissive:0xffe9c8,emissiveIntensity:0.6,transparent:true,opacity:0.7})); mirHalo.rotation.y=Math.PI/2; mirHalo.position.set(0.416,1.45,1.61); add(mirHalo);
+var mirR=new THREE.Mesh(new THREE.CylinderGeometry(0.36,0.36,0.02,40),std({color:0x34353a,roughness:0.6})); mirR.rotation.z=Math.PI/2; mirR.position.set(0.425,1.20,1.61); add(mirR); (function(){ var tw=(('ontouchstart' in window)||navigator.maxTouchPoints>0)?512:1024; var m=new THREE.Reflector(new THREE.CircleGeometry(0.318,48),{clipBias:0.003,textureWidth:tw,textureHeight:tw,color:0x80858a,maxDist:6}); m.rotation.y=Math.PI/2; m.position.set(0.4365,1.20,1.61); add(m); })(); /* круглое зеркало Ø72 — настоящее отражение (Reflector) внутри LED-кольца */
+var mirRing=new THREE.Mesh(new THREE.TorusGeometry(0.36,0.015,8,48),black); mirRing.rotation.y=Math.PI/2; mirRing.position.set(0.435,1.20,1.61); add(mirRing);
+var mirLed=new THREE.Mesh(new THREE.TorusGeometry(0.325,0.008,6,64),emitCool); mirLed.rotation.y=Math.PI/2; mirLed.position.set(0.44,1.20,1.61); add(mirLed); /* подсветка зеркала, вывод h=1200 */
+var mirHalo=new THREE.Mesh(new THREE.TorusGeometry(0.385,0.012,6,64),new THREE.MeshStandardMaterial({color:0xfff6e8,emissive:0xffe9c8,emissiveIntensity:0.6,transparent:true,opacity:0.7})); mirHalo.rotation.y=Math.PI/2; mirHalo.position.set(0.416,1.20,1.61); add(mirHalo);
 var mirLight=new THREE.PointLight(0xfff0dc,0.3,2.2,1.6); mirLight.position.set(0.6,1.45,1.61); scene.add(mirLight);
+(function(){ var sens=new THREE.Mesh(new THREE.CylinderGeometry(0.007,0.007,0.001,16),new THREE.MeshStandardMaterial({color:0xe8ecef,emissive:0x9fd8ff,emissiveIntensity:0.5,roughness:0.4})); sens.rotation.z=Math.PI/2; sens.position.set(0.4465,0.94,1.61); add(sens); var sr=new THREE.Mesh(new THREE.TorusGeometry(0.012,0.0015,6,24),std({color:0xd8dde2,roughness:0.4})); sr.rotation.y=Math.PI/2; sr.position.set(0.4466,0.94,1.61); add(sr); })(); /* сенсорная кнопка подсветки внизу зеркала; питание — розетка за зеркалом (см. блок электрики) */
 cyl(0.92,0,0.45,1.61,0.23,beige); solidRect(0.69,1.15,1.38,1.84);
 box(0.61,2.56,0,H,4.22,4.82,white,true); [1.1,1.59,2.08].forEach(function(x){ box(x-0.004,x+0.004,0.05,H-0.05,4.21,4.22,std({color:0xc9c4bb})); }); box(0.63,2.54,2.3,2.308,4.21,4.22,std({color:0xc9c4bb}));
 [0.86,1.35,1.84,2.32].forEach(function(x){ box(x-0.015,x+0.015,0.9,1.3,4.19,4.22,black); box(x-0.015,x+0.015,2.36,2.6,4.19,4.22,black); }); /* шкаф до потолка с антресолью */
-box(3.64,3.868,2.35,2.65,0.80,1.50,whiteGloss); /* AC indoor unit */
+box(3.64,3.868,2.55,2.85,0.80,1.50,std({color:0x3c3c3e,roughness:0.4,metalness:0.1})); box(3.636,3.64,2.57,2.6,0.86,1.44,std({color:0x2a2a2c,roughness:0.5})); /* AC indoor unit: графитовый корпус на ореховой панели, в тон шкафчикам санузла; верх в 15 см от потолка */
 /* sconces (бра h=1600) */
 [0.996,3.535].forEach(function(z){ cyl(3.82,1.42,1.78,z,0.03,black,16); cyl(3.82,1.78,1.8,z,0.03,emitWarm,16); cyl(3.82,1.40,1.42,z,0.03,emitWarm,16); box(3.80,3.868,1.59,1.61,z-0.01,z+0.01,black); });
 /* curtains */
@@ -432,7 +468,17 @@ var rugM=new THREE.Mesh(new THREE.BoxGeometry(2.0,0.014,3.0),std({map:new THREE.
 box(9.89,11.087,0.74,0.78,4.89,5.78,oak,true); [[9.93,4.93],[9.93,5.74],[11.04,4.93],[11.04,5.74]].forEach(function(p){ box(p[0]-0.02,p[0]+0.02,0,0.74,p[1]-0.02,p[1]+0.02,black); });
 function chair(cx,cz,backDz){ box(cx-0.21,cx+0.21,0.44,0.48,cz-0.21,cz+0.21,graphite,true); var bz=cz+backDz*0.19; box(cx-0.2,cx+0.2,0.48,0.9,bz-0.02,bz+0.02,graphite); [[-0.18,-0.18],[0.18,-0.18],[-0.18,0.18],[0.18,0.18]].forEach(function(o){ box(cx+o[0]-0.012,cx+o[0]+0.012,0,0.44,cz+o[1]-0.012,cz+o[1]+0.012,black); }); }
 chair(10.2,4.65,-1); chair(10.78,4.65,-1); chair(10.2,6.02,1); chair(10.78,6.02,1);
-box(10.84,11.087,2.35,2.65,0.80,1.50,whiteGloss); /* AC */
+box(10.84,11.087,2.55,2.85,0.80,1.50,whiteGloss); /* AC: верх в 15 см от потолка */
+/* ---- кондиционирование: мульти-сплит 3 в 1, одна корзина на северном фасаде у северо-западного угла гостиной (x 7,25–8,05) ---- */
+box(4.86,5.66,2.485,2.785,4.60,4.827,whiteGloss); /* по центру между верхом наличника (2,27) и потолком */ /* детская: внутренний блок над дверью по оси проёма, поток к окну; ВНИМАНИЕ: крайняя антресольная створка шкафа (72 см) при открывании задевает блок — решить при заказе мебели */
+(function(){ var fr=std({color:0x9a9a98,roughness:0.5,metalness:0.6}); [7.25,8.05].forEach(function(x){ [-0.42,-0.02].forEach(function(z){ cyl(x,0.85,1.85,z,0.012,fr,8); }); }); [0.85,1.85].forEach(function(y){ box(7.25,8.05,y-0.01,y+0.01,-0.43,-0.41,fr); box(7.25,8.05,y-0.01,y+0.01,-0.03,-0.01,fr); box(7.24,7.26,y-0.01,y+0.01,-0.42,-0.02,fr); box(8.04,8.06,y-0.01,y+0.01,-0.42,-0.02,fr); });
+  box(7.3,8.0,0.95,1.5,-0.4,-0.08,std({color:0xdedcd6,roughness:0.5})); var fan=new THREE.Mesh(new THREE.TorusGeometry(0.2,0.012,6,32),std({color:0x3a3a3c})); fan.position.set(7.65,1.22,-0.41); add(fan); /* корзина и наружный блок */
+  window.__acRoutes=new THREE.Group(); window.__acRoutes.visible=false; scene.add(window.__acRoutes); var cu=std({color:0xb87333,roughness:0.4,metalness:0.6});
+  function tube(a,b){ var dx=b[0]-a[0], dz=b[1]-a[1], len=Math.hypot(dx,dz); var m=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,len,8),cu); m.position.set((a[0]+b[0])/2,2.9,(a[1]+b[1])/2); m.rotation.z=Math.PI/2; m.rotation.y=-Math.atan2(dz,dx); window.__acRoutes.add(m); }
+  function route(pts){ for(var i=0;i<pts.length-1;i++) tube(pts[i],pts[i+1]); }
+  route([[10.95,1.15],[10.95,0.75],[7.65,0.75],[7.65,0.0]]); /* гостиная: вдоль оконной стены к корзине, ~4 м */
+  route([[5.26,4.75],[5.26,1.0],[6.9,1.0],[7.65,0.75]]); /* детская: от блока над дверью к лоджии, по лоджии к углу гостиной, ~6 м */
+  route([[3.87,1.15],[4.3,1.0],[5.26,1.0]]); /* спальня: через стену в лоджию, дальше общим коридором, ~4,5 м */ })();
 /* kitchen */
 var front=std({color:0xe6e2da,roughness:0.55}), worktop=std({color:0xdedad2,roughness:0.5});
 /* отдельностоящий холодильник в нише гарнитура: свои дверцы, без фасадов; сверху глухая панель без дверцы, сбоку планка */
@@ -447,8 +493,13 @@ box(7.6,10.262,0,0.86,6.78,7.335,front,true); box(7.6,10.262,0.86,0.9,6.74,7.335
 box(8.21,8.79,0.9,0.91,6.82,7.3,screenMat); [[8.36,6.98],[8.64,6.98],[8.36,7.16],[8.64,7.16]].forEach(function(p){ var r=new THREE.Mesh(new THREE.TorusGeometry(0.08,0.004,6,32),std({color:0x55585c})); r.rotation.x=Math.PI/2; r.position.set(p[0],0.912,p[1]); add(r); });
 box(9.45,9.95,0.88,0.905,6.86,7.26,graphite); box(9.45,9.95,0.86,0.88,6.86,7.26,std({color:0x2a2b2e}));
 cyl(9.7,0.9,1.25,7.26,0.012,black,10); box(9.7-0.012,9.7+0.012,1.23,1.25,7.0,7.26,black); cyl(9.7,1.17,1.23,7.0,0.012,black,10);
-box(7.6,10.262,1.5,H,6.985,7.335,front); [8.2,8.8,9.4,10.0].forEach(function(x){ box(x-0.004,x+0.004,1.55,H-0.05,6.98,6.985,std({color:0xd3d0ca})); }); box(7.6,10.262,2.44,2.45,6.98,6.985,std({color:0xd3d0ca})); /* верхний ярус до потолка, фасады push-to-open */
-box(7.6,10.262,1.49,1.5,7.0,7.3,ledMat);
+/* ---- верхний ряд кухни: низ на 65 см над столешницей (1,55 м); фартук, LED-линия и вытяжка привязаны к этой высоте ---- */
+function kitchenUpper(b,g){ var prev=curGroup; curGroup=g; var t=tex(T.conc,3.964/2.4,(b-0.9)/2.4); t.offset.x=0.141; box(6.898,10.862,0.9,b,7.325,7.335,std({map:t,roughness:0.85})); /* фартук */
+  box(7.6,10.262,b,H,6.985,7.335,front); [8.2,8.8,9.4,10.0].forEach(function(x){ box(x-0.004,x+0.004,b+0.05,H-0.05,6.98,6.985,std({color:0xd3d0ca})); }); box(7.6,10.262,2.44,2.45,6.98,6.985,std({color:0xd3d0ca})); /* верхний ярус до потолка, фасады push-to-open */
+  box(7.6,10.262,b-0.01,b,7.0,7.3,ledMat);
+  /* встраиваемая вытяжка 60 см в шкафу над варочной: стальная панель с фильтрами и телескопический козырёк 3 см; воздуховод Ø150 внутри антресольной части к коробу стояка */
+  box(8.2,8.8,b-0.013,b,6.99,7.3,steel); box(8.2,8.8,b-0.04,b-0.01,6.985,7.03,graphite); [8.3,8.38,8.46].forEach(function(x){ box(x-0.01,x+0.01,b-0.032,b-0.018,6.98,6.985,std({color:0xc9c4bb})); }); [[8.26,7.08],[8.54,7.08]].forEach(function(p){ box(p[0],p[0]+0.2,b-0.015,b-0.013,p[1],p[1]+0.18,std({color:0x8f9397,roughness:0.5,metalness:0.6})); }); curGroup=prev; }
+kitchenUpper(1.55,furnGroup);
 box(10.262,10.862,0,H,6.74,7.335,front,true);
 /* угол у стояка: столешница до стены, внизу глухой фасад с люком, выше — открытые полки под специи и книги */
 box(10.862,11.087,0.86,0.9,6.74,7.069,worktop); box(10.87,11.08,0.08,0.86,6.76,6.78,front); box(10.87,11.08,0.0,0.08,6.78,7.069,graphite); box(10.95,11.0,0.45,0.48,6.75,6.76,black);
@@ -478,8 +529,8 @@ box(1.42,2.02,0.88,1.0,4.94,5.49,rim); box(1.48,1.96,1.0,1.003,5.0,5.43,std({col
   for(var y=0.1;y<0.6;y+=0.1){ box(2.075,2.535,y-0.004,y+0.004,4.965,5.425,wickDark); } box(2.25,2.37,0.64,0.66,5.39,5.43,wickDark); /* плетение, ручка на крышке */ })();
 box(1.71,1.73,1.0,1.3,4.95,4.99,black); box(1.71,1.73,1.28,1.3,4.95,5.19,black);
 /* зеркало прямоугольное 60×73 в ширину раковины: чёрная рамка, подсветка по контуру сзади; верх на 2,05 — в линию со стеклом и антресолью */
-box(1.40,2.04,1.30,2.07,4.945,4.95,emitCool); box(1.42,2.02,1.32,2.05,4.95,4.97,black); box(1.435,2.005,1.335,2.035,4.955,4.972,mirrorMat);
-(function(){ var sens=new THREE.Mesh(new THREE.CylinderGeometry(0.009,0.009,0.001,16),new THREE.MeshStandardMaterial({color:0xe8ecef,emissive:0x9fd8ff,emissiveIntensity:0.5,roughness:0.4})); sens.rotation.x=Math.PI/2; sens.position.set(1.72,1.375,4.9728); add(sens); })(); /* сенсорная кнопка подсветки внизу по центру стекла */
+box(1.40,2.04,1.30,2.07,4.945,4.95,emitCool); box(1.42,2.02,1.32,2.05,4.95,4.97,black); (function(){ var tw=(('ontouchstart' in window)||navigator.maxTouchPoints>0)?512:1024; var m=new THREE.Reflector(new THREE.PlaneGeometry(0.57,0.70),{clipBias:0.003,textureWidth:tw,textureHeight:tw,color:0x80858a,maxDist:6}); m.position.set(1.72,1.685,4.9725); add(m); })(); /* настоящее зеркало (Reflector), полотно 57×70 */
+(function(){ var sens=new THREE.Mesh(new THREE.CylinderGeometry(0.007,0.007,0.001,16),new THREE.MeshStandardMaterial({color:0xe8ecef,emissive:0x9fd8ff,emissiveIntensity:0.5,roughness:0.4})); sens.rotation.x=Math.PI/2; sens.position.set(1.72,1.4,4.9728); add(sens); var sr=new THREE.Mesh(new THREE.TorusGeometry(0.012,0.0015,6,24),std({color:0xd8dde2,roughness:0.4})); sr.position.set(1.72,1.4,4.9729); add(sr); })(); /* сенсорная кнопка подсветки внизу по центру стекла, 8 см от нижней кромки */
 curGroup=furnGroup;
 /* северо-западный угол: керамогранитная перегородка 10 см до потолка у изголовья ванны на всю её ширину; за ней — открытые полки на всю глубину перегородки (x 0,407–1,10),
    открытой стороной к двери, верх 2,05 в уровень со стеклом и шкафчиком над унитазом; для щёток, паст, шампуней */
@@ -506,15 +557,13 @@ box(1.582,1.942,0.4,0.46,6.68,7.01,std({color:0xffffff}),true); box(1.602,1.922,
 (function(){ box(1.30,1.40,0.75,0.85,6.985,7.01,black); box(1.30,1.34,0.80,0.815,6.95,6.985,black); box(1.335,1.365,0.94,0.98,6.99,7.01,black); box(1.335,1.365,0.95,0.97,6.965,6.99,black);
   cyl(1.35,0.76,0.96,6.975,0.012,black,12); cyl(1.35,0.96,1.0,6.975,0.022,black,16); box(1.33,1.37,0.99,1.0,6.953,6.975,black);
   var hose=std({color:0x2a2a2c,roughness:0.5,metalness:0.3}); cyl(1.33,0.55,0.75,6.98,0.006,hose,8); cyl(1.37,0.55,0.76,6.98,0.006,hose,8); var hb=new THREE.Mesh(new THREE.TorusGeometry(0.02,0.006,6,16,Math.PI),hose); hb.rotation.z=Math.PI; hb.position.set(1.35,0.55,6.98); add(hb); })();
-/* шкаф над унитазом (графит, открытая колонка у стояка + две двери со стороны ванны, стальные кнопки) — четыре варианта габаритов, переключатель K:
-   0 — 1,3–2,05 как есть; 1 — опущен до короба (1,02–2,05); 2 — до потолка (1,3–3,0); 3 — от короба до потолка (1,02–3,0). Выше 2,05 — второй ярус дверей */
-var cabVar=[0,1,2,3].map(function(i){ var g=new THREE.Group(); g.visible=(i===0); furnGroup.add(g); return g; }), cabMode=0;
+/* шкаф над унитазом: графит, открытая колонка с тремя нишами у стояка + две двери со стороны ванны, стальные кнопки; 1,3–2,05, глубина 24 */
 function wcCabinet(y0,y1,g){ var t=0.018, x0=1.10, x1=1.978, x2=2.328, z0=7.02, z1=7.26, gap=std({color:0x2a2a2c}), prev=curGroup; curGroup=g;
   box(x0,x2,y0,y0+t,z0,z1,graphite); box(x0,x2,y1-t,y1,z0,z1,graphite); box(x0,x0+t,y0,y1,z0,z1,graphite); box(x2-t,x2,y0,y1,z0,z1,graphite); box(x0,x2,y0,y1,z1-0.012,z1,graphite); box(x1,x1+t,y0,y1,z0,z1,graphite);
   var n=Math.max(2,Math.round((y1-y0)/0.25)), step=(y1-y0)/n; for(var k=1;k<n;k++){ var yy=y0+k*step; box(x1+t,x2-t,yy-t/2,yy+t/2,z0,z1-0.012,graphite); } /* полки открытой колонки */
   var tiers=(y1>2.3)?[[y0,2.05],[2.05,y1]]:[[y0,y1]]; tiers.forEach(function(tr){ box(x0+t,x1,tr[0]+t,tr[1]-t,z0-0.018,z0,graphite); box(1.537,1.541,tr[0]+t+0.01,tr[1]-t-0.01,z0-0.019,z0,gap); [1.495,1.583].forEach(function(x){ var kn=new THREE.Mesh(new THREE.CylinderGeometry(0.013,0.013,0.012,20),steel); kn.rotation.x=Math.PI/2; kn.position.set(x,tr[0]+0.07,z0-0.024); g.add(kn); }); }); if(tiers.length>1) box(x0+t,x1,2.045,2.055,z0-0.019,z0,gap);
   var pw=std({color:0xf4f2ee,roughness:0.8}); box(2.06,2.25,y0+t,y0+t+0.12,7.1,7.24,pw); cyl(2.15,y0+step+t/2,y0+step+0.13,7.17,0.035,std({color:0x2f4a38,roughness:0.5}),16); curGroup=prev; }
-wcCabinet(1.3,2.05,cabVar[0]); wcCabinet(1.02,2.05,cabVar[1]); wcCabinet(1.3,H,cabVar[2]); wcCabinet(1.02,H,cabVar[3]);
+wcCabinet(1.3,2.05,furnGroup);
 /* над шкафчиком — ниша 25 см до потолка, как есть */
 /* справа от унитаза (если сидеть): чёрный держатель бумаги на восточной стене (стена с дверью), h 0,7, 72 см от оси унитаза; корзинка с запасными рулонами — в углу между стеной и коробом стояка, под держателем */
 (function(){ var pw=std({color:0xffffff,roughness:0.9}); box(2.558,2.568,0.64,0.76,6.70,6.74,black); var arm=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.13,10),black); arm.rotation.z=Math.PI/2; arm.position.set(2.493,0.7,6.72); add(arm);
@@ -532,21 +581,25 @@ function art(seed,w,h){ var c=cv(512,Math.round(512*h/w)),g=c.getContext('2d'),W
   for(var i=1;i<pal.length;i++){ g.fillStyle=pal[i]; g.globalAlpha=0.85; g.beginPath(); var cx=W*(0.2+0.6*((seed*7+i*3)%5)/5), cy=Hh*(0.35+0.5*i/pal.length), rr=Math.min(W,Hh)*(0.18+0.12*((seed+i)%3)); if(i%2){ g.arc(cx,cy,rr,0,Math.PI*2); } else { g.moveTo(0,Hh); g.quadraticCurveTo(cx,cy-rr,W,Hh*0.9); g.lineTo(W,Hh); } g.closePath(); g.fill(); }
   g.globalAlpha=1; g.strokeStyle='rgba(40,35,30,0.35)'; g.lineWidth=2; g.beginPath(); g.moveTo(W*0.1,Hh*0.72); g.lineTo(W*0.9,Hh*0.72); g.stroke(); void r; return c; }
 function picture(x1,x2,y1,y2,z1,z2,seed){ var alongX=(x2-x1)>(z2-z1); box(x1,x2,y1,y2,z1,z2,black); var w=alongX?(x2-x1):(z2-z1), h=y2-y1, m=0.025; var t=new THREE.CanvasTexture(art(seed,w,h)); var mat=std({map:t,roughness:0.95}); if(alongX){ var zf=(z1<4.95&&z2<5)?z2+0.001:z1-0.001; var pm=new THREE.Mesh(new THREE.PlaneGeometry(w-2*m,h-2*m),mat); pm.position.set((x1+x2)/2,(y1+y2)/2,zf); if(zf<z1) pm.rotation.y=Math.PI; add(pm); } else { var xf=x1-0.001; var pm2=new THREE.Mesh(new THREE.PlaneGeometry(w-2*m,h-2*m),mat); pm2.position.set(xf,(y1+y2)/2,(z1+z2)/2); pm2.rotation.y=-Math.PI/2; add(pm2); } }
-picture(11.067,11.087,1.25,2.05,2.05,3.25,1); /* над диваном */
+picture(11.067,11.087,1.25,2.05,2.15,3.35,1); /* над диваном, по его оси z 2,75 — той же, что у люстры и ковра */
 
 picture(3.985,4.565,1.15,1.95,4.942,4.962,2); picture(5.986,6.566,1.15,1.95,4.942,4.962,3); /* в коридоре, на стенах спальни и детской */
 
 
 curGroup=null;
 
-/* ---------------- шкаф в холле: до потолка, 60 см, вдоль южной стены от санузла до наличника входной двери; пять дверей, антресоль, ниша под обувь у входа ---------------- */
+/* ---------------- шкаф в холле: купе до потолка, глубина 66 (система съедает ~6–8 см), вдоль южной стены от санузла до наличника входной двери; белый корпус, три зеркальные створки во всю высоту в чёрном slim-профиле, без ручек — сплошное зеркало с двумя стыками (настоящее отражение, THREE.Reflector) ---------------- */
 curGroup=furnGroup;
-box(2.78,4.45,0,H,6.735,7.335,white,true); box(2.693,2.78,0,H,6.735,7.335,white); /* корпус + доборная планка у стены санузла */
-box(4.45,5.52,2.3,H,6.735,7.335,white); box(4.45,5.52,0,0.03,6.735,7.335,white); box(5.49,5.52,0,0.42,6.735,7.335,white); box(4.45,5.52,0,0.42,7.305,7.335,white); /* правая секция: антресоль общая, внизу открытая ниша под обувь */
-box(4.45,5.52,0.42,2.3,6.735,7.335,white,true); [4.424,4.972].forEach(function(x){ box(x-0.004,x+0.004,0.45,2.28,6.73,6.735,std({color:0xc9c4bb})); }); [4.48,5.03].forEach(function(x){ box(x-0.015,x+0.015,0.9,1.3,6.705,6.735,black); }); /* правая секция закрытая: две двери */
-[[6.82,0x2b2926],[7.07,0x6b4a36]].forEach(function(sh){ box(4.6,4.9,0.03,0.11,sh[0],sh[0]+0.11,std({color:sh[1],roughness:0.7})); box(5.05,5.35,0.03,0.11,sh[0],sh[0]+0.11,std({color:sh[1],roughness:0.7})); });
-[3.328,3.876].forEach(function(x){ box(x-0.004,x+0.004,0.05,H-0.05,6.73,6.735,std({color:0xc9c4bb})); }); [4.424,4.972].forEach(function(x){ box(x-0.004,x+0.004,2.32,H-0.05,6.73,6.735,std({color:0xc9c4bb})); }); box(2.79,5.51,2.3,2.308,6.73,6.735,std({color:0xc9c4bb})); /* зазоры дверей, антресоль над 2,3 */
-[3.27,3.39,4.36].forEach(function(x){ box(x-0.015,x+0.015,0.9,1.3,6.705,6.735,black); }); [3.27,3.39,4.36,4.48,5.03].forEach(function(x){ box(x-0.015,x+0.015,2.36,2.6,6.705,6.735,black); }); /* ручки: нижние у левых секций, верхние на всех антресолях */
+box(2.78,5.52,0,H,6.725,7.335,white,true); box(2.693,2.78,0,H,6.675,7.335,white); solidRect(2.78,5.52,6.675,6.725); /* корпус + добор у стены санузла */
+box(2.78,2.80,0,H,6.675,7.335,white); box(5.50,5.52,0,H,6.675,7.335,white); box(2.80,5.50,H-0.05,H,6.675,6.725,white); box(2.80,5.50,0,0.02,6.675,6.725,std({color:0xb9b6b0,roughness:0.5,metalness:0.3})); /* боковины, верхняя планка над треком, нижняя направляющая */
+(function(){ var prof=std({color:0x1e1e1f,roughness:0.5,metalness:0.4}), y0=0.02, y1=H-0.05;
+  var leaves=[[2.80,3.72,6.680,6.692],[3.69,4.61,6.700,6.712],[4.58,5.50,6.680,6.692]]; /* створки 92 см с нахлёстом 3 см: 1 и 3 на переднем рельсе, 2 — на заднем */
+  leaves.forEach(function(L){ box(L[0],L[0]+0.02,y0,y1,L[2],L[3],prof); box(L[1]-0.02,L[1],y0,y1,L[2],L[3],prof); box(L[0],L[1],y0,y0+0.02,L[2],L[3],prof); box(L[0],L[1],y1-0.02,y1,L[2],L[3],prof); box(L[0]+0.02,L[1]-0.02,y0+0.02,y1-0.02,L[2]+0.004,L[3],std({color:0x9aa0a6,roughness:0.3,metalness:0.5})); });
+  function quads(list,z){ var pos=[],idx=[]; list.forEach(function(r,i){ var a=-r[1],b=-r[0],c=y0+0.02,d=y1-0.02; pos.push(a,c,0, b,c,0, b,d,0, a,d,0); var o=i*4; idx.push(o,o+1,o+2, o+2,o+3,o); });
+    var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals();
+    var tw=(('ontouchstart' in window)||navigator.maxTouchPoints>0)?512:1024; var m=new THREE.Reflector(g,{clipBias:0.003,textureWidth:tw,textureHeight:tw,color:0x80858a,maxDist:12}); m.position.set(0,0,z); m.rotation.y=Math.PI; add(m); }
+  quads([[2.82,3.70],[4.60,5.48]],6.6795); quads([[3.71,4.59]],6.6995); /* зеркала: передний и задний рельс — две плоскости */
+})();
 curGroup=null;
 
 /* ---------------- sockets & switches (листы 12–13: цвет чёрный, выключатели h=900, розетки h=300 если не указано) ---------------- */
@@ -568,14 +621,14 @@ function fixture(x,z,y,face,types,parent){ /* face: +x -x +z -z = direction into
       else if(t==='u'){ box(xi,xi+(face==='+x'?0.002:-0.002),y-0.004,y+0.004,z+o-0.016,z+o-0.004,rjMat,false,elecGroup); box(xi,xi+(face==='+x'?0.002:-0.002),y-0.004,y+0.004,z+o+0.004,z+o+0.016,rjMat,false,elecGroup); }
       else { box(xi,xi+(face==='+x'?0.002:-0.002),y-0.008,y+0.008,z+o-0.012,z+o+0.012,rjMat,false,elecGroup); } } } }
 /* спальня */
-fixture(0.84,0.556,0.3,'+z',['s']); /* одиночная внизу у окна — под напольный прибор; для столика розетка на левой стене на 93 см */ fixture(0.413,2.05,0.93,'+x',['s']); fixture(0.413,1.17,0.93,'+x',['s']); /* две одиночные симметрично по сторонам зеркала, на одной высоте над столешницей */ fixture(3.868,0.996,0.65,'-x',['s','s','w']); fixture(3.868,3.535,0.65,'-x',['w','s','s']); fixture(2.674,4.82,0.3,'-z',['s']); fixture(2.674,4.82,0.9,'-z',['w']); /* по центру простенка шкаф—наличник */
+fixture(0.84,0.556,0.3,'+z',['s']); /* одиночная внизу у окна — под напольный прибор; для столика розетка на левой стене на 93 см */ fixture(0.413,2.05,0.93,'+x',['s']); fixture(0.413,1.17,0.93,'+x',['s']); /* две одиночные симметрично по сторонам зеркала, на одной высоте над столешницей */ fixture(0.413,1.61,1.20,'+x',['s']); /* розетка за зеркалом туалетного столика — питание подсветки, скрыта зеркалом */ fixture(3.868,0.996,0.65,'-x',['s','s','w']); fixture(3.868,3.535,0.65,'-x',['w','s','s']); fixture(2.674,4.82,0.3,'-z',['s']); fixture(2.674,4.82,0.9,'-z',['w']); /* по центру простенка шкаф—наличник */
 /* детская + лоджия */
 fixture(4.006,2.13,0.3,'+x',['s','s','r']); fixture(4.006,2.875,0.95,'+x',['s','s','s']); /* внизу: RJ45 первым слева (если стоять лицом к стене), две розетки под системный блок; верхний блок по центру стола */ fixture(6.68,4.827,0.3,'-z',['s','s']); fixture(4.674,4.827,0.9,'-z',['w']); fixture(4.1,1.732,0.9,'+z',['w']); fixture(6.72,0.531,0.3,'+z',['s','s']); /* лоджия: двойная IP44 у восточного торца — сушилка/вентилятор + второй прибор */ fixture(4.231,1.0,0.3,'+x',['s']); /* лоджия: одинарная IP44 на торцевой стене у двери — конвектор, пылесос */
 /* гостиная */
 fixture(7.227,2.70,1.5,'+x',['r','s','s']); fixture(7.227,2.70,0.55,'+x',['s','s','s']); fixture(7.227,2.70,0.87,'+x',['s','u']); /* розетка 220 + USB-модуль между тумбой и ТВ, по оси */ /* блок под тумбу — внутри подвесной тумбы (380–730), снаружи не виден */ fixture(11.087,1.14,0.3,'-x',['s','s']); fixture(11.087,5.34,0.3,'-x',['s','s']); /* пара между диваном и столом убрана как дублирующая */
 fixture(7.5,0.547,0.3,'+z',['s']); /* угол у окна, на оконной стене рядом с ТВ-стеной: торшер, увлажнитель, ёлка */
 /* кухня: на фартуке */
-fixture(7.905,7.325,1.1,'-z',['s','s']); fixture(9.1,7.325,1.1,'-z',['s','s']); /* первая пара по центру участка холодильник–варочная (7,6–8,21); вторая между варочной и мойкой на 9,10 — как было */
+fixture(7.905,7.325,1.1,'-z',['s','s']); fixture(9.1,7.325,1.1,'-z',['s','s']); fixture(8.5,7.325,2.0,'-z',['s']); /* розетка вытяжки внутри шкафа над варочной, снаружи не видна */ /* первая пара по центру участка холодильник–варочная (7,6–8,21); вторая между варочной и мойкой на 9,10 — как было */
 /* санузел */
 fixture(1.26,4.94,1.257,'+z',['s']); fixture(1.26,4.94,1.343,'+z',['s']); /* рабочая пара слева от зеркала, между полками и раковиной: фен, ирригатор */ fixture(1.26,4.94,0.6,'+z',['s']); /* отдельная розетка стиралки ниже, на 0,6 м — на одной вертикали с парой, но своя: занята постоянно; IP44 с крышкой */ fixture(1.72,4.94,1.75,'+z',['s']); /* розетка за зеркалом по его оси, h 1,75 — питание подсветки, снаружи не видна (видна в режиме «Скрыть мебель»); управление сенсором на зеркале */
 /* коридор и прихожая */
@@ -619,7 +672,7 @@ var keys={};
 window.addEventListener('keydown',function(e){ keys[e.code]=true; if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].indexOf(e.code)>=0) e.preventDefault();
   var plus=(e.code==='Equal'||e.code==='NumpadAdd'||e.key==='+'||e.code==='BracketRight'), minus=(e.code==='Minus'||e.code==='NumpadSubtract'||e.key==='-'||e.code==='BracketLeft');
   if(plus||minus){ fovUser=Math.max(45,Math.min(85,(fovUser||Math.round(camera.fov))+(plus?-5:5))); applyFov(); e.preventDefault(); } /* + приближает (угол уже), − отдаляет (угол шире) */
-  if(e.code==='KeyM') setTop(!topView); if(e.code==='KeyF') furnBtn.click(); if(e.code==='KeyC') comfortBtn.click(); if(e.code==='KeyK') cabBtn.click(); });
+  if(e.code==='KeyM') setTop(!topView); if(e.code==='KeyF') furnBtn.click(); if(e.code==='KeyC') comfortBtn.click(); if(e.code==='KeyL') lamBtn.click(); });
 window.addEventListener('keyup',function(e){ keys[e.code]=false; });
 var overlay=document.getElementById('overlay');
 var isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
@@ -647,13 +700,15 @@ var tints=[{c:0xe4ddd2,n:'Тёплый греж'},{c:0xded3c2,n:'Беж'},{c:0xd
 var swEl=document.getElementById('swatches');
 tints.forEach(function(t,i){ var b=document.createElement('button'); b.className='sw'+(i===0?' on':''); b.type='button'; b.title=t.n; b.setAttribute('aria-label','Стены: '+t.n); b.style.background='#'+('000000'+t.c.toString(16)).slice(-6); b.addEventListener('click',function(){ paint.color.setHex(t.c); Array.prototype.forEach.call(swEl.children,function(c){ c.classList.remove('on'); }); b.classList.add('on'); }); swEl.appendChild(b); });
 /* furniture toggle */
+var lamBtn=document.getElementById('lamBtn');
+lamBtn.addEventListener('click',function(){ lamDiag=!lamDiag; floorDiag.visible=lamDiag; floorStraight.visible=!lamDiag; lamBtn.textContent='Ламинат: '+(lamDiag?'диагональ':'прямая'); });
 var furnBtn=document.getElementById('furnBtn');
 furnBtn.addEventListener('click',function(){ furnVisible=!furnVisible; furnGroup.visible=furnVisible; furnBtn.textContent=furnVisible?'Скрыть мебель':'Показать мебель'; });
 /* top view */
 var fovRange=document.getElementById('fovRange'), fovLabel=document.getElementById('fovLabel');
 fovRange.addEventListener('input',function(){ fovUser=parseInt(fovRange.value,10); applyFov(); });
 var viewBtn=document.getElementById('viewBtn');
-function setTop(v){ topView=v; topHidden.visible=!v; document.getElementById('ret').style.display=v?'none':'block'; hintEl.hidden=true; document.getElementById('vig').style.opacity=0; viewBtn.textContent=v?'Вернуться внутрь':'Вид сверху'; if(v){ if(document.exitPointerLock&&locked) document.exitPointerLock(); overlay.hidden=true; joy.style.display='none'; } else { overlay.hidden=isTouch||entered; hintEl.hidden=!(entered&&!isTouch); } }
+function setTop(v){ topView=v; topHidden.visible=!v; if(window.__acRoutes) window.__acRoutes.visible=v; document.getElementById('ret').style.display=v?'none':'block'; hintEl.hidden=true; document.getElementById('vig').style.opacity=0; viewBtn.textContent=v?'Вернуться внутрь':'Вид сверху'; if(v){ if(document.exitPointerLock&&locked) document.exitPointerLock(); overlay.hidden=true; joy.style.display='none'; } else { overlay.hidden=isTouch||entered; hintEl.hidden=!(entered&&!isTouch); } }
 viewBtn.addEventListener('click',function(){ setTop(!topView); });
 
 /* minimap + room HUD */
@@ -674,9 +729,6 @@ function resize(){ var w=window.innerWidth, h=window.innerHeight; renderer.setSi
 window.addEventListener('resize',resize); resize();
 var retEl=document.getElementById('ret');
 var clock=new THREE.Clock(), fwd=new THREE.Vector3(), vig=document.getElementById('vig'), vigOp=0, prevYaw=yaw, slowT=0, lowRes=false, comfort=true;
-var cabBtn=document.getElementById('cabBtn'), cabNames=['1,3–2,05 как есть','опущен до короба','до потолка','от короба до потолка'];
-function setCab(m){ cabMode=m%4; cabVar.forEach(function(g,i){ g.visible=(i===cabMode); }); cabBtn.textContent='Шкаф над унитазом: '+cabNames[cabMode]; }
-cabBtn.addEventListener('click',function(){ setCab(cabMode+1); }); setCab(0);
 var comfortBtn=document.getElementById('comfortBtn');
 comfortBtn.addEventListener('click',function(){ comfort=!comfort; comfortBtn.textContent='Комфорт: '+(comfort?'вкл':'выкл'); if(!comfort){ vig.style.opacity=0; } });
 function frame(){ requestAnimationFrame(frame); var dt=Math.min(0.05,clock.getDelta());
